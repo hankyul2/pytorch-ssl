@@ -34,6 +34,7 @@ setting_dict = dict(
            "-j 8 "
            "--pin-memory "
            "--amp "
+           "--drop-last "
            "--channels-last",
 )
 
