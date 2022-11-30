@@ -1,4 +1,4 @@
-# Self-Supervised Learning 
+# MOCO
 
 ## Tutorial
 1. clone
