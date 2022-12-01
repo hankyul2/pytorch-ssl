@@ -5,13 +5,12 @@ import timm
 import torch
 
 from pic.utils import setup, get_args_parser, save_checkpoint, resume_from_checkpoint
-from pic.utils import print_metadata, Metric, reduce_mean, Accuracy
+from pic.utils import print_metadata, Metric, reduce_mean
 from pic.data import get_dataset, get_dataloader
 from pic.model import get_ema_ddp_model
 from pic.criterion import get_scaler_criterion
-from pic.optimizer import get_optimizer_and_scheduler
 
-from dino import DINO, LocalGlobalTransform
+from dino import DINO, LocalGlobalTransform, cosine_scheduler, optimizer_scheduler
 import vision_transformer
 
 
@@ -43,7 +42,7 @@ def train_one_epoch(train_dataloader, model, optimizer, criterion,
         data_m.update(time.time() - start_time)
 
         with torch.cuda.amp.autocast(args.amp):
-            y_hat, target = model(xs)
+            y_hat, target = model(xs, epoch)
             loss = criterion(y_hat, target)
 
         if args.distributed:
@@ -101,13 +100,19 @@ def run(args):
     train_dataloader, _ = get_dataloader(train_dataset, val_dataset, args)
 
     # 2. make model
-    model = timm.create_model(args.model_name, in_chans=args.in_channels, num_classes=1,
-                              drop_path_rate=args.drop_path_rate, pretrained=args.pretrained)
-    model = DINO(model).cuda(args.device)
+    model = DINO(
+        model=timm.create_model(
+            args.model_name, in_chans=args.in_channels, num_classes=1,
+            drop_path_rate=args.drop_path_rate, pretrained=args.pretrained
+        ),
+        m=cosine_scheduler(args.min_momentum, args.max_momentum, args.epoch, args.iter_per_epoch),
+        epoch_freeze_fc = args.epoch_freeze_fc,
+    ).cuda(args.device)
     model, ema_model, ddp_model = get_ema_ddp_model(model, args)
 
     # 3. load optimizer
-    optimizer, scheduler = get_optimizer_and_scheduler(model, args)
+    optimizer, scheduler = optimizer_scheduler(args, model)
+    scheduler.step()
 
     # 4. load criterion
     criterion, valid_criterion, scaler = get_scaler_criterion(args)

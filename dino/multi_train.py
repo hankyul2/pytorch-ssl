@@ -16,7 +16,7 @@ setting_dict = dict(
            "--smoothing 0.0 "
            "--epoch 300 "
            "--optimizer adamw "
-           "--weight-decay 1e-4 "
+           "--weight-decay 4e-1 "
            "--lr 0.0005 "
            "--min-lr 1e-6 "
            "--warmup-lr 0 "
@@ -78,6 +78,13 @@ if __name__ == '__main__':
 
     for setup in multi_args.setup:
         args_parser = get_args_parser()
+
+        # extra parser option (default but changeable)
+        args_parser.add_argument('--min-momentum', type=float, default=0.9995, help="start EMA decay value")
+        args_parser.add_argument('--max-momentum', type=float, default=1.0, help="end EMA decay value")
+        args_parser.add_argument('--min-weight-decay', type=float, default=0.04, help="start weight decay value")
+        args_parser.add_argument('--epoch-freeze-fc', type=int, default=1, help="epoch for freezing fc layer")
+
         args = args_parser.parse_args(setting_dict[setup].split(' '))
         pass_required_variable_from_previous_args(args, prev_args)
         for model_name in multi_args.model_name:

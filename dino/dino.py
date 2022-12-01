@@ -1,14 +1,79 @@
-import random
+from collections import OrderedDict
 
 import numpy as np
+
 import torch
-from PIL import Image, ImageOps, ImageFilter
+from PIL import ImageOps, ImageFilter
 from torch import nn
 import torch.nn.functional as F
 import torch.distributed as dist
+from torch.optim import SGD, AdamW, RMSprop
 from torchvision import transforms as TF
-
 from timm.utils import ModelEmaV2
+
+
+def cosine_scheduler(base_value, final_value, epochs, niter_per_ep,
+                     warmup_epochs=0, start_warmup_value=0):
+    warmup_schedule = np.array([])
+    warmup_iters = warmup_epochs * niter_per_ep
+    if warmup_epochs > 0:
+        warmup_schedule = np.linspace(start_warmup_value, base_value, warmup_iters)
+
+    iters = np.arange(epochs * niter_per_ep - warmup_iters)
+    schedule = final_value + 0.5 * (base_value - final_value) * (1 + np.cos(np.pi * iters / len(iters)))
+    schedule = np.concatenate((warmup_schedule, schedule))
+
+    assert len(schedule) == epochs * niter_per_ep
+
+    return schedule
+
+
+def get_params_groups(model):
+    regularized = []
+    not_regularized = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        # we do not regularize biases nor Norm parameters
+        if name.endswith(".bias") or len(param.shape) == 1:
+            not_regularized.append(param)
+        else:
+            regularized.append(param)
+    return [{'params': regularized}, {'params': not_regularized, 'weight_decay': 0.}]
+
+
+class LRWDScheduler:
+    def __init__(self, optimizer, lr_scheduler, wd_scheduler):
+        self.optimizer = optimizer
+        self.lr_scheduler = lr_scheduler
+        self.wd_scheduler = wd_scheduler
+        self.iter = 0
+    def step(self):
+        for i, param_group in enumerate(self.optimizer.param_groups):
+            param_group["lr"] = self.lr_scheduler[self.iter]
+            if i == 0:  # only the first group is regularized
+                param_group["weight_decay"] = self.wd_scheduler[self.iter]
+        self.iter += 1
+
+
+def optimizer_scheduler(args, model):
+    parameter = get_params_groups(model)
+    if args.optimizer == 'sgd':
+        optimizer = SGD(parameter, args.lr, args.momentum, weight_decay=args.weight_decay, nesterov=args.nesterov)
+    elif args.optimizer == 'adamw':
+        optimizer = AdamW(parameter, args.lr, betas=args.betas, eps=args.eps, weight_decay=args.weight_decay)
+    elif args.optimizer == 'rmsprop':
+        optimizer = RMSprop(parameter, args.lr, eps=args.eps, momentum=args.momentum, weight_decay=args.weight_decay)
+    else:
+        NotImplementedError(f"{args.optimizer} is not supported yet")
+
+    scheduler = LRWDScheduler(
+        optimizer,
+        cosine_scheduler(args.min_lr, args.lr, args.epoch, args.iter_per_epoch, args.warmup_epoch, args.warmup_lr),
+        cosine_scheduler(args.min_weight_decay, args.weight_decay, args.epoch, args.iter_per_epoch),
+    )
+
+    return optimizer, scheduler
 
 
 class DINOHead(nn.Module):
@@ -35,14 +100,22 @@ class DINOHead(nn.Module):
         return x
 
 
+def set_norm_zero(self, grad_input, grad_output):
+    self.weight.grad = None
+    self.weight_g.grad = None
+
+
 class DINO(nn.Module):
-    def __init__(self, model, output_dim=65536, m=0.9995, cm=0.9,
-                 Ts=0.1, Tt=0.07, Tt_w=0.04, Tt_e=30):
+    def __init__(self, model, output_dim=65536, m=[0.9995] * 1000000, cm=0.9,
+                 Ts=0.1, Tt=0.07, Tt_w=0.04, Tt_e=30, epoch_freeze_fc=1):
         super().__init__()
         self.m = m
+        self.iter = 0
         self.cm = cm
         self.Ts = Ts
         self.Tt = np.concatenate([np.linspace(Tt_w, Tt, Tt_e), np.full(900, Tt)])
+        self.epoch_freeze_fc = epoch_freeze_fc
+        self.freeze_hook = None
 
         self.student = model
         self.embed_dim = model.head.weight.shape[1]
@@ -54,7 +127,16 @@ class DINO(nn.Module):
 
         self.register_buffer("C", torch.rand(1, output_dim))
 
+    def freeze_fc_layer(self, epoch):
+        if epoch < self.epoch_freeze_fc and self.freeze_hook is None:
+            self.freeze_hook = self.student.head.fc.register_full_backward_hook(set_norm_zero)
+        elif epoch > self.epoch_freeze_fc and self.freeze_hook:
+            self.student.head.fc._full_backward_hooks = OrderedDict()
+            self.freeze_hook = None
+
     def forward(self, xs, epoch=0):
+        self.freeze_fc_layer(epoch)
+
         # 1. forward student
         s = torch.cat([
             self.student(torch.cat(xs[:2], dim=0)),
@@ -80,6 +162,11 @@ class DINO(nn.Module):
         t /= dist.get_world_size()
         self.C[:] = self.C * self.cm + t.mean(dim=0) * (1 - self.cm)
 
+        # 6. update ema
+        self.teacher.decay = self.m[self.iter]
+        self.teacher.update(self.student)
+        self.iter += 1
+
         return logit, label
 
 
@@ -103,15 +190,16 @@ class GaussianBlur(object):
                 radius=random.uniform(self.radius_min, self.radius_max)
             )
         )
+import random
 
 
 class Solarization(object):
     """
     Apply Solarization to the PIL image.
     """
+
     def __init__(self, p):
         self.p = p
-
     def __call__(self, img):
         if random.random() < self.p:
             return ImageOps.solarize(img)
@@ -120,6 +208,7 @@ class Solarization(object):
 
 
 class LocalGlobalTransform(object):
+
     def __init__(self, global_crops_scale=(0.4, 1.0), local_crops_scale=(0.05, 0.4), local_crops_number=8):
         flip_jitter_gray = TF.Compose([
             TF.RandomHorizontalFlip(p=0.5),
@@ -155,7 +244,6 @@ class LocalGlobalTransform(object):
             GaussianBlur(p=0.5),
             normalize,
         ])
-
     def __call__(self, image):
         crops = [self.global1(image), self.global2(image)]
         for _ in range(self.local_crops_number):
