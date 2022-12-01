@@ -12,24 +12,21 @@ from pic.utils import get_args_parser, clear
 setting_dict = dict(
     dino = "ImageNet "
            "--dataset_type ImageFolder "
-           "--train-size 224 224 "
-           "--random-crop-scale 0.2 1.0 "
-           "--hflip 0.5 "
-           "--mean 0.4802 0.4481 0.3975 "
-           "--std 0.2302 0.2265 0.2262 "
-           "--drop-path-rate 0.0 "
+           "--drop-path-rate 0.1 "
            "--smoothing 0.0 "
-           "--epoch 200 "
+           "--epoch 300 "
            "--optimizer adamw "
-           "--momentum 0.9 "
-           "--lr 0.002 "
            "--weight-decay 1e-4 "
+           "--lr 0.0005 "
+           "--min-lr 1e-6 "
+           "--warmup-lr 0 "
            "--warmup-epoch 10 "
            "--scheduler cosine "
+           "--grad-norm 3.0 "
            "--cutmix 0.0 "
            "--mixup 0.0 "
            "--remode 0.0 "
-           "-b 256 "
+           "-b 64 "
            "-j 8 "
            "--pin-memory "
            "--amp "
@@ -41,7 +38,7 @@ setting_dict = dict(
 def get_multi_args_parser():
     parser = argparse.ArgumentParser(description='pytorch-image-classification', add_help=True, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('setup', type=str, nargs='+', choices=setting_dict.keys(), help='experiment setup')
-    parser.add_argument('-m', '--model-name', type=str, nargs='+', default=['resnet50'], help='list of model names')
+    parser.add_argument('-m', '--model-name', type=str, nargs='+', default=['vit_small'], help='list of model names')
     parser.add_argument('-t', '--model-type', type=str, default='pic', help='model type')
     parser.add_argument('-c', '--cuda', type=str, default='0', help='cuda device')
     parser.add_argument('-o', '--output-dir', type=str, default='log', help='log dir')
