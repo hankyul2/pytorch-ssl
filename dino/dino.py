@@ -24,7 +24,8 @@ class DINOHead(nn.Module):
         # fix magnitude (weight_g) to 1 (normalization)
         self.fc = nn.utils.weight_norm(nn.Linear(bottleneck_dim, output_dim, bias=False))
         self.fc.weight_g.data.fill_(1)
-        self.fc.weight_g.data.requires_grad = False
+        self.fc.weight_g.requires_grad = False
+        self.fc.weight = self.fc.weight_v.detach()
 
     def forward(self, x):
         x = self.mlp(x)
@@ -35,7 +36,7 @@ class DINOHead(nn.Module):
 
 
 class DINO(nn.Module):
-    def __init__(self, model, output_dim=65536, m=0.999, cm=0.9,
+    def __init__(self, model, output_dim=65536, m=0.9995, cm=0.9,
                  Ts=0.1, Tt=0.07, Tt_w=0.04, Tt_e=30):
         super().__init__()
         self.m = m
@@ -44,8 +45,8 @@ class DINO(nn.Module):
         self.Tt = np.concatenate([np.linspace(Tt_w, Tt, Tt_e), np.full(900, Tt)])
 
         self.student = model
-        self.embed_dim = model.fc.weight.shape[1]
-        # self.student.fc = DINOHead(self.embed_dim)
+        self.embed_dim = model.head.weight.shape[1]
+        self.student.head = DINOHead(self.embed_dim)
 
         self.teacher = ModelEmaV2(self.student, decay=m)
         for param in self.teacher.parameters():
@@ -54,23 +55,30 @@ class DINO(nn.Module):
         self.register_buffer("C", torch.rand(1, output_dim))
 
     def forward(self, xs, epoch=0):
+        # 1. forward student
         s = torch.cat([
-            self.student.forward_features(xs[:2]),
-            self.student.forward_features(xs[2:]),
+            self.student(torch.cat(xs[:2], dim=0)),
+            self.student(torch.cat(xs[2:], dim=0)),
         ], dim=0)
-        s = self.student.fc(s)
+        s = self.student.head(s).chunk(len(xs))
 
+        # 2. forward teacher
         with torch.no_grad():
-            t = self.teacher.module.forward_features(xs[:2])
-            t = self.teacher.module.fc(t)
+            t = self.teacher.module(torch.cat(xs[:2], dim=0))
+            t = self.teacher.module.head(t).chunk(2)
 
-        # sharpening+centering
+        # 3. sharpening+centering
         logit = torch.cat([s[i] / self.Ts for i in [0, 1] + list(range(2, len(xs))) * 2])
         label = torch.cat([(t[i]-self.C) / self.Tt[epoch] for i in [1, 0] + [0] * (len(xs) - 2) + [1] * (len(xs) - 2)])
 
+        # 4. softmax(label) for computing c.e.
+        label = F.softmax(label, dim=-1)
+
+        # 5. update center
+        t = torch.cat(t)
         dist.all_reduce(t)
         t /= dist.get_world_size()
-        self.C[:] = self.C * self.cm + torch.cat(t).mean(dim=0) * (1 - self.cm)
+        self.C[:] = self.C * self.cm + t.mean(dim=0) * (1 - self.cm)
 
         return logit, label
 
@@ -122,17 +130,18 @@ class LocalGlobalTransform(object):
             TF.ToTensor(),
             TF.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
         ])
+        interpolation = TF.functional.InterpolationMode('bicubic')
 
         # global crop 1: GaussianBlur
         self.global1 = TF.Compose([
-            TF.RandomResizedCrop(224, scale=global_crops_scale, interpolation=Image.BICUBIC),
+            TF.RandomResizedCrop(224, scale=global_crops_scale, interpolation=interpolation),
             flip_jitter_gray,
             GaussianBlur(1.0),
             normalize,
         ])
         # global crop 2: GaussianBlur + Solarization
         self.global2 = TF.Compose([
-            TF.RandomResizedCrop(224, scale=global_crops_scale, interpolation=Image.BICUBIC),
+            TF.RandomResizedCrop(224, scale=global_crops_scale, interpolation=interpolation),
             flip_jitter_gray,
             GaussianBlur(0.1),
             Solarization(0.2),
@@ -141,7 +150,7 @@ class LocalGlobalTransform(object):
         # local crop: GaussianBlur
         self.local_crops_number = local_crops_number
         self.local = TF.Compose([
-            TF.RandomResizedCrop(96, scale=local_crops_scale, interpolation=Image.BICUBIC),
+            TF.RandomResizedCrop(96, scale=local_crops_scale, interpolation=interpolation),
             flip_jitter_gray,
             GaussianBlur(p=0.5),
             normalize,
