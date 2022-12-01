@@ -12,6 +12,7 @@ from pic.criterion import get_scaler_criterion
 from pic.optimizer import get_optimizer_and_scheduler
 
 from dino import DINO, LocalGlobalTransform
+import vision_transformer
 
 
 def train_one_epoch(train_dataloader, model, optimizer, criterion,
@@ -64,7 +65,7 @@ def train_one_epoch(train_dataloader, model, optimizer, criterion,
 
         if batch_idx and args.print_freq and batch_idx % args.print_freq == 0:
             num_digits = len(str(total_iter))
-            args.log(f"TRAIN({epoch:03}): [{batch_idx:>{num_digits}}/{total_iter}] {batch_m} {data_m} ")
+            args.log(f"TRAIN({epoch:03}): [{batch_idx:>{num_digits}}/{total_iter}] {batch_m} {data_m} {loss_m}")
 
         if batch_idx and ema_model and batch_idx % args.ema_update_step == 0:
             ema_model.update(model)
@@ -84,7 +85,7 @@ def train_one_epoch(train_dataloader, model, optimizer, criterion,
     args.log('-'*space*num_metric)
     args.log(("{:>16}"*num_metric).format('Stage', 'Batch', 'Data', 'F+B+O', 'Loss'))
     args.log('-'*space*num_metric)
-    args.log(f"{'TRAIN('+str(epoch)+')':>{space}}{duration:>{space}}{data:>{space}}{f_b_o:>{space}}")
+    args.log(f"{'TRAIN('+str(epoch)+')':>{space}}{duration:>{space}}{data:>{space}}{f_b_o:>{space}}{loss:>{space}.4f}")
     args.log('-'*space*num_metric)
 
     return loss
@@ -100,7 +101,7 @@ def run(args):
     train_dataloader, _ = get_dataloader(train_dataset, val_dataset, args)
 
     # 2. make model
-    model = timm.create_model(args.model_name, in_chans=args.in_channels, num_classes=128,
+    model = timm.create_model(args.model_name, in_chans=args.in_channels, num_classes=1,
                               drop_path_rate=args.drop_path_rate, pretrained=args.pretrained)
     model = DINO(model).cuda(args.device)
     model, ema_model, ddp_model = get_ema_ddp_model(model, args)
