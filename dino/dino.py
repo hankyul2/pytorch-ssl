@@ -1,15 +1,15 @@
-from collections import OrderedDict
-
+import random
 import numpy as np
+from collections import OrderedDict
+from PIL import ImageOps, ImageFilter
+from timm.utils import ModelEmaV2
 
 import torch
-from PIL import ImageOps, ImageFilter
 from torch import nn
 import torch.nn.functional as F
 import torch.distributed as dist
 from torch.optim import SGD, AdamW, RMSprop
 from torchvision import transforms as TF
-from timm.utils import ModelEmaV2
 
 
 def cosine_scheduler(base_value, final_value, epochs, niter_per_ep,
@@ -190,7 +190,6 @@ class GaussianBlur(object):
                 radius=random.uniform(self.radius_min, self.radius_max)
             )
         )
-import random
 
 
 class Solarization(object):
