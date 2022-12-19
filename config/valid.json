@@ -1,0 +1,15 @@
+{
+  "data_dir": {
+    "imagenet1k": "data/classification/imagenet1k",
+    "cifar10": "data/classification/cifar10",
+    "cifar100": "data/classification/cifar100",
+    "celeba": "data/classification/celeba"
+  },
+  "imagenet1k_moco_v1": {
+    "settings": {"dataset_type": "imagenet1k", "test_size": [224, 224], "center_crop_ptr": 0.875,
+      "model_type": "torchvision"},
+    "model_weight": {
+      "resnet50": "pretrained/moco_v1_200ep_pretrain.pth.tar"
+    }
+  }
+}
