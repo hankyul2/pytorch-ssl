@@ -1,15 +1,84 @@
 {
   "data_dir": {
-    "imagenet1k": "data/classification/imagenet1k",
+    "ImageFolder": "data/classification/imageNet",
+    "ImageFolder_with_Idx": "data/classification/imageNet",
     "cifar10": "data/classification/cifar10",
     "cifar100": "data/classification/cifar100",
     "celeba": "data/classification/celeba"
   },
-  "imagenet1k_moco_v1": {
-    "settings": {"dataset_type": "imagenet1k", "test_size": [224, 224], "center_crop_ptr": 0.875,
-      "model_type": "torchvision"},
-    "model_weight": {
-      "resnet50": "pretrained/moco_v1_200ep_pretrain.pth.tar"
+  "checkpoint": {
+    "basic": {
+      "model_weight": { },
+      "feature_path": { }
+    },
+    "dino_official": {
+      "model_weight": {
+        "resnet50": "pretrained/dino_resnet50_pretrain.pth",
+        "dino_small": "pretrained/dino_deitsmall16_pretrain.pth",
+        "dino_base": "pretrained/dino_vitbase16_pretrain.pth"
+      },
+      "feature_path": {
+        "resnet50": "log_val/imagenet1k_knn_224_v1_resnet50_v38"
+      }
+    },
+    "mocov1_official": {
+      "model_weight": {
+        "resnet50": "pretrained/moco_v1_200ep_pretrain_converted.pth.tar"
+      },
+      "feature_path": {
+        "resnet50": "log_val/imagenet1k_knn_224_v2_resnet50_v1"
+      }
+    },
+    "mocov2_ep200_official": {
+      "model_weight": {
+        "resnet50": "pretrained/moco_v2_200ep_pretrain_converted.pth.tar"
+      },
+      "feature_path": { }
+    },
+    "mocov2_ep800_official": {
+      "model_weight": {
+        "resnet50": "pretrained/moco_v2_800ep_pretrain_converted.pth.tar"
+      },
+      "feature_path": { }
+    },
+    "mocov3_ep100_official": {
+      "model_weight": {
+        "resnet50": "pretrained/r-50-100ep_converted.pth.tar"
+      },
+      "feature_path": { }
+    },
+    "mocov3_ep300_official": {
+      "model_weight": {
+        "resnet50": "pretrained/r-50-300ep_converted.pth.tar"
+      },
+      "feature_path": { }
+    },
+    "mocov3_ep1000_official": {
+      "model_weight": {
+        "resnet50": "pretrained/r-50-1000ep_converted.pth.tar"
+      },
+      "feature_path": { }
+    },
+    "mocov3_vit_official": {
+      "model_weight": {
+        "mocov3_small": "pretrained/vit-s-300ep_converted.pth.tar",
+        "mocov3_base": "pretrained/vit-b-300ep_converted.pth.tar"
+      },
+      "feature_path": { }
+    }
+  },
+  "settings": {
+    "imagenet1k_knn_224_v1": {
+        "dataset_type": "ImageFolder_with_Idx", "test_size": [224, 224], "center_crop_ptr": 0.875,
+        "model_type": "torchvision", "eval_protocol":  "knn", "k": [10, 20, 100, 200], "t": [0.03, 0.07]
+    },
+    "imagenet1k_fc_224_v1": {
+      "dataset_type": "ImageFolder", "test_size": [224, 224], "center_crop_ptr": 0.875,
+      "model_type": "torchvision", "eval_protocol": "fc"
+    },
+    "imagenet1k_fc_224_v2": {
+      "dataset_type": "ImageFolder", "test_size": [224, 224], "center_crop_ptr": 0.95,
+      "model_type": "timm", "eval_protocol": "fc", "pretrained": true
     }
   }
 }

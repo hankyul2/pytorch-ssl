@@ -1,13 +1,11 @@
-import gc
+import json
 import os
 import argparse
 
-import torch
-
-# from mecla.dataset import get_dataset
-# from mecla.model import get_model
-# from mecla.engine import test
-from pssl.utils import setup, get_args_with_setting, print_batch_run_settings, clear, load_model_list_from_config
+from pssl.dataset import get_dataset, get_dataloader
+from pssl.engine import test_with_knn_classifier, test
+from pssl.model import get_model
+from pssl.utils import setup, get_args_with_setting, clear, load_model_list_from_config, load_weight_list_from_config
 
 
 def get_args_parser():
@@ -24,12 +22,24 @@ def get_args_parser():
         help='paths for each dataset and pretrained-weight. (json)'
     )
     setup.add_argument(
-        '-s', '--settings', type=str, default=['imagenet1k_224_v1'], nargs='+',
-        help='settings used for default value'
+        '-es', '--eval-settings', type=str, default=['imagenet1k_knn_224_v1'], nargs='+',
+        help='settings used in overall evaluation'
+    )
+    setup.add_argument(
+        '-ws', '--weight-settings', type=str, default=[], nargs='+',
+        help='settings used for choosing weight of model'
     )
     setup.add_argument(
         '--eval-protocol', type=str, default='fc', choices=['fc', 'knn'],
         help="choose between fully-connected classifier and knn classifier"
+    )
+    setup.add_argument(
+        '--t', type=float, default=0.07, nargs='+',
+        help = 'temperature used for knn classifier. this value is copied from moco cifar demo.'
+    )
+    setup.add_argument(
+        '--k', type=int, default=20, nargs='+',
+        help = 'k for knn classifier. this value is copied from moco cifar demo.'
     )
     setup.add_argument(
         '--entity', type=str, default='hankyul2',
@@ -52,7 +62,7 @@ def get_args_parser():
         help='experiment name for each run'
     )
     setup.add_argument(
-        '--exp-target', type=str, default=['setting', 'model_name'], nargs='+',
+        '--exp-target', type=str, default=['setting', 'weight_setting', 'model_name'], nargs='+',
         help='experiment name based on arguments'
     )
     setup.add_argument(
@@ -79,14 +89,20 @@ def get_args_parser():
         '-c', '--cuda', type=str, default='0,1,2,3,4,5,6,7,8',
         help='CUDA_VISIBLE_DEVICES options'
     )
-    setup.set_defaults(amp=True, channel_last=True, pin_memory=True, resume=None, mode='valid')
+    setup.set_defaults(amp=False, channel_last=False, pin_memory=True,
+                       resume=None, mode='valid', train_split='train', val_split='val',
+                       aug_repeat=False, mixup=None, cutmix=None)
 
     # 2. augmentation & dataset & dataloader
     data = parser.add_argument_group('data')
     data.add_argument(
-        '--dataset-type', type=str, default='imagenet1k',
-        choices=['imagenet1k', 'cifar10', 'cifar100', 'celeba'],
+        '--dataset-type', type=str, default='ImageFolder_with_Idx',
+        choices=['ImageFolder_with_Idx', 'cifar10', 'cifar100', 'celeba'],
         help='dataset type'
+    )
+    data.add_argument(
+        '--feature-path', type=str, default=None,
+        help='feature saved path used for knn classifier'
     )
     data.add_argument(
         '--test-size', type=int, default=(224, 224), nargs='+',
@@ -124,6 +140,10 @@ def get_args_parser():
         '--pin-memory', action='store_true', default=False,
         help='pin memory in dataloader'
     )
+    data.add_argument(
+        '--drop-last', action='store_true', default=False,
+        help='drop last batch in train dataloader'
+    )
 
     # 3.model
     model = parser.add_argument_group('model')
@@ -155,10 +175,25 @@ def get_args_parser():
     return parser
 
 
-def run(args, train_dataloader, test_dataloader):
-    # model = get_model(args)
-    # result = test(valid_dataloader=valid_dataloader, valid_dataset=valid_dataset, model=model, args=args)
-    pass
+def run(args):
+    # 1. load data
+    train_dataset, test_dataset = get_dataset(args, args.mode)
+    train_dataloader, test_dataloader = get_dataloader(train_dataset, test_dataset, args, args.mode)
+
+    # 2. load model
+    model = get_model(args)
+
+    # 3. evaluate model
+    if args.eval_protocol == 'knn':
+        top1, top5 = test_with_knn_classifier(train_dataloader, test_dataloader, model, args)
+    elif args.eval_protocol == 'fc':
+        top1, top5 = test(test_dataloader, model, args)
+    else:
+        AssertionError(f"{args.eval_protocol} is not supported yet.")
+
+    # 4. log result
+    if args.use_wandb:
+        args.log({'top1': top1, 'top5': top5}, metric=True)
 
 
 if __name__ == '__main__':
@@ -166,27 +201,30 @@ if __name__ == '__main__':
     parser = get_args_parser()
     args = parser.parse_args()
 
-    # 2. run N(setting) x M(model_names) experiment
     prev_args = None
-    for setting in args.settings:
-        # 2-1. load model names and print
-        args.setting = setting
-        if len(args.model_names) == 0:
-            args.model_names = load_model_list_from_config(args, args.mode)
-        print_batch_run_settings(args)
+    need_to_load_setting = len(args.weight_settings) == 0
+    need_to_load_models = len(args.model_names) == 0
 
-        # 2-2. load dataset & dataloader
-        # train_dataset, test_dataset = get_dataset(new_args, new_args.mode)
-        # train_dataloader, test_dataloader = get_dataset(new_args, new_args.mode)
-        train_dataset = test_dataset = train_dataloader = test_dataloader = None
+    for eval_setting in args.eval_settings:
+        # 2. load weight_settings
+        weight_settings = load_weight_list_from_config(args)
+        if need_to_load_setting:
+            args.weight_settings = weight_settings
 
+        for weight_setting in args.weight_settings:
+            # 3. load model_list
+            args.weight_setting = weight_setting
+            model_names = load_model_list_from_config(args, args.mode)
+            if need_to_load_models:
+                args.model_names = model_names
 
-        # 2-3. valid each model
-        for model_name in args.model_names:
-            new_args = get_args_with_setting(parser, args.config, setting, model_name, prev_args, args.mode)
-            setup(new_args)
+            # 4. valid each model (3 steps)
+            for model_name in args.model_names:
+                # 3-1. create new args object for new logger assignment for each mode
+                new_args = get_args_with_setting(parser, args.config, eval_setting, weight_setting, model_name, prev_args)
 
-            run(new_args, train_dataloader, test_dataloader)
-
-            clear(new_args)
-            prev_args = new_args
+                # 3-2. run model
+                setup(new_args)
+                run(new_args)
+                clear(new_args)
+                prev_args = new_args

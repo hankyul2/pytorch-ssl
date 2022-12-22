@@ -8,6 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from functools import partial
 from datetime import datetime
+import torch.distributed as dist
 
 import numpy
 import torch
@@ -96,6 +97,8 @@ def init_logger(args):
     else:
         if args.exp_name is None:
             args.exp_name = '_'.join(str(getattr(args, target)) for target in args.exp_target)
+        if args.distributed:
+            dist.barrier() # to ensure have save version id (must be same for knn classifier)
         args.version_id = len(list(glob.glob(os.path.join(args.output_dir, f'{args.exp_name}_v*'))))
         args.exp_name = f'{args.exp_name}_v{args.version_id}'
 
@@ -150,7 +153,14 @@ def load_model_list_from_config(args, mode):
     if mode == 'train':
         return config['model_list']
     else:
-        return list(config[args.setting]['model_weight'].keys())
+        return list(config['checkpoint'][args.weight_setting]['model_weight'].keys())
+
+
+def load_weight_list_from_config(args):
+    with open(args.config, 'r') as f:
+        config = json.load(f)
+
+    return list(config['checkpoint'].keys())
 
 
 def pass_required_variable_from_previous_args(args, prev_args=None):
@@ -160,35 +170,23 @@ def pass_required_variable_from_previous_args(args, prev_args=None):
             exec(f"args.{var} = prev_args.{var}")
 
 
-def get_args_with_setting(parser, config, setting, model_name, prev_args=None, mode='train'):
+def get_args_with_setting(parser, config, eval_setting, weight_setting, model_name=None, prev_args=None):
     with open(config) as f:
         config = json.load(f)
 
-    if mode == 'train':
-        parser_with_setting = deepcopy(parser)
-        parser_with_setting.set_defaults(**config['settings'][setting])
-        args = parser_with_setting.parse_args()
+    parser_with_setting = deepcopy(parser)
+    parser_with_setting.set_defaults(**config['settings'][eval_setting])
+    args = parser_with_setting.parse_args()
 
-        args.setting = setting
-        args.model_name = model_name
-        args.data_dir = config['data_dir'][args.dataset_type]
-        args.checkpoint_path = config['model_weight'].get(args.model_name, None)
-        pass_required_variable_from_previous_args(args, prev_args)
+    args.setting = eval_setting
+    args.model_name = model_name
+    args.weight_setting = weight_setting
+    args.data_dir = config['data_dir'][args.dataset_type]
+    args.checkpoint_path = config['checkpoint'][weight_setting]['model_weight'].get(args.model_name, None)
+    args.feature_path = config['checkpoint'][weight_setting]['feature_path'].get(args.model_name, None)
+    pass_required_variable_from_previous_args(args, prev_args)
 
-        return args
-
-    else:
-        parser_with_setting = deepcopy(parser)
-        parser_with_setting.set_defaults(**config[setting]['settings'])
-        args = parser_with_setting.parse_args()
-
-        args.setting = setting
-        args.model_name = model_name
-        args.data_dir = config['data_dir'][args.dataset_type]
-        args.model_weight_dict = config[setting]['model_weight'].get(model_name, None)
-        pass_required_variable_from_previous_args(args, prev_args)
-
-        return args
+    return args
 
 
 def print_batch_run_settings(args):
