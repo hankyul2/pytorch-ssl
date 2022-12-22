@@ -36,7 +36,28 @@ Table of contents:
 ### 3. how to validate your model
 
 1. run following command.
+   
+   KNN classifier
+   
+   ```bash
+   # Single-GPU
+   python3 valid.py -es imagenet1k_knn_224_v1 -ws dino_official
+   # Multi-GPU 
+   torchrun --nproc_per_node=4 --master_port=12345 valid.py -es imagenet1k_knn_224_v1 -ws dino_official
+   ```
+
+   FC classifier
 
    ```bash
-   python3 valid.py -s imagenet1k_224_v1 -m moco_v1_resnet50_official 
+   # Single-GPU
+   python3 valid.py -es imagenet1k_fc_224_v1 -ws dino_official
+   # Multi-GPU 
+   torchrun --nproc_per_node=4 --master_port=12345 valid.py -es imagenet1k_fc_224_v1 -ws dino_official
    ```
+   
+   *Tips*
+
+   1. For large sized train dataset, we recommend to run multi-gpu command because, extracting whole features takes too much time in single gpu.
+   2. If you have extracted features once, please specify the extracted feature path at `feature_path` in `config/valid.json`.
+   3. If you don't specify weight settings (`-ws`), whole weight settings will be used in validation.
+   4. If you don't specify model name (`-m`), whole model in `model_weight` will be used in validation.
